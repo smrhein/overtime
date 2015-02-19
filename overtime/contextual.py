@@ -1,7 +1,21 @@
-import overtime.utils
 import sys
 import itertools
 import joblib
+import overtime.utils
+
+
+class GenericContextManager(object):
+    def __init__(self, enter_call, exit_call):
+        self._enter_call = enter_call
+        self._exit_call = exit_call
+        
+    def __enter__(self):
+        value = self._enter_call()
+        self._exit_call = self._exit_call.with_object(value)
+        return self._value
+        
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._exit_call()
 
 
 def get_context_guard(mgr):
