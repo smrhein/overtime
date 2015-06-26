@@ -5,6 +5,7 @@ import posix_ipc
 import sys
 import pickle
 import uuid
+import warnings
 
 import numpy as np
 
@@ -19,8 +20,8 @@ def _debug(*args, **kwargs):
 
 
 class shmmap(mmap.mmap):
-    @classmethod
-    def _ipc_name(cls, prefix='shmmap', suffix=''):
+    @staticmethod
+    def _ipc_name(prefix='shmmap', suffix=''):
         return ''.join((prefix, str(uuid.uuid4()), suffix))
 
     @classmethod
@@ -28,38 +29,33 @@ class shmmap(mmap.mmap):
         return cls(None, None, length)
 
     def __new__(cls, semname, shmname, length, access=mmap.ACCESS_WRITE, offset=0):
-        if semname and shmname:
-            semkwargs = {'name': semname}
-            shmkwargs = {'name': shmname}
-            semkwargs['flags'] = shmkwargs['flags'] = 0
-        elif not (semname or shmname):
-            semkwargs = {'name': cls._ipc_name()}
-            shmkwargs = {'name': cls._ipc_name()}
-            semkwargs['flags'] = shmkwargs['flags'] = posix_ipc.O_CREX
-        else:
-            raise ValueError('semname is None if and only if shmname is None')
-        shmkwargs['size'] = length
-
-        with contextlib.closing(posix_ipc.Semaphore(**semkwargs)) as sem, \
-                exiting(posix_ipc.SharedMemory(**shmkwargs), exiter=posix_ipc.SharedMemory.close_fd) as shm:
-            try:
-                self = super(shmmap, cls).__new__(cls, shm.fd, length, access=access, offset=offset)
-                self.shmname = shm.name
-                self.semname = sem.name
-            except:
-                exc = sys.exc_info()
-                try:
-                    sem.acquire(0)
-                except posix_ipc.BusyError:
-                    posix_ipc.unlink_semaphore(sem.name)
-                    posix_ipc.unlink_shared_memory(shm.name)
-                finally:
-                    raise exc[0], exc[1], exc[2]
+        try:
+            if semname and shmname:
+                flags = 0
+            elif not semname and not shmname:
+                semname = cls._ipc_name()
+                shmname = cls._ipc_name()
+                flags = posix_ipc.O_CREX
             else:
-                self.length = length
-                self.access = access
-                self.offset = offset
-                return self
+                raise ValueError('semname if and only if shmname')
+
+            with contextlib.closing(posix_ipc.Semaphore(name=semname, flags=flags)), \
+                 exiting(posix_ipc.SharedMemory(name=shmname, flags=flags, size=length),
+                         exiter=posix_ipc.SharedMemory.close_fd) as shm:
+                self = super(shmmap, cls).__new__(cls, shm.fd, length, access=access, offset=offset)
+            self.shmname = shmname
+            self.semname = semname
+        except:
+            exc = sys.exc_info()
+            try:
+                cls._cleanup(semname, shmname)
+            finally:
+                raise exc[0], exc[1], exc[2]
+        else:
+            self.length = length
+            self.access = access
+            self.offset = offset
+            return self
 
     def __reduce_ex__(self, protocol):
         return self.__reduce__()
@@ -67,25 +63,27 @@ class shmmap(mmap.mmap):
     def __reduce__(self):
         if self.access == mmap.ACCESS_COPY:
             raise pickle.PicklingError('copy on write memory cannot be pickled')
-        sem = posix_ipc.Semaphore(self.semname, 0)
-        try:
-            copy = self.__class__, (self.semname, self.shmname, self.length, self.access, self.offset)
+        copy = self.__class__, (self.semname, self.shmname, self.length, self.access, self.offset)
+        with contextlib.closing(posix_ipc.Semaphore(self.semname, 0)) as sem:
             sem.release()
-            return copy
-        finally:
-            sem.close()
+        return copy
 
     def __del__(self):
         self.close()
-        sem = posix_ipc.Semaphore(self.semname, 0)
+        self._cleanup(self.semname, self.shmname)
+
+    @staticmethod
+    def _cleanup(semname, shmname):
         try:
-            sem.acquire(0)
-        except posix_ipc.BusyError:
-            posix_ipc.unlink_semaphore(self.semname)
-            posix_ipc.unlink_shared_memory(self.shmname)
-            _debug('del', sem.name, sem.value)
-        finally:
-            sem.close()
+            with contextlib.closing(posix_ipc.Semaphore(semname, 0)) as sem:
+                try:
+                    sem.acquire(0)
+                except posix_ipc.BusyError:
+                    posix_ipc.unlink_semaphore(semname)
+                    posix_ipc.unlink_shared_memory(shmname)
+        except Exception as e:
+            warnings.warn('possible resource leakage of {} and/or {} caused by {}'.format(semname, shmname, e),
+                          RuntimeWarning)
 
 
 class ndshm(np.ndarray):
