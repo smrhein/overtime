@@ -4,6 +4,15 @@ from overtime.sharedmemory import shmmap, ndshm
 
 
 class Test_ndshmem(unittest.TestCase):
+    def test_fromndarray(self):
+        raise NotImplementedError
+
+    def test_zeros(self):
+        raise NotImplementedError
+
+    def test_empty_like(self):
+        raise NotImplementedError
+
     def test_empty(self):
         import numpy as np
 
@@ -41,7 +50,7 @@ class Test_ndshmem(unittest.TestCase):
 
         b = a[1:-1, 1:-1, 1:-1]
         self.assertNotEqual(a.offset, b.offset)
-        self.assertEqual(a._shm.semname, b._shm.semname)
+        self.assertEqual(a._shm.name, b._shm.name)
 
         c = np.array(a).view(ndshm)
         self.assertEqual(c._shm, None)
@@ -59,7 +68,7 @@ class Test_ndshmem(unittest.TestCase):
 
         a = a[1:-1, 1:-1, 1:-1]
         c = pickle.loads(pickle.dumps(a))
-        self.assertEqual(a._shm.semname, c._shm.semname)
+        self.assertEqual(a._shm.name, c._shm.name)
 
         c[...] = np.random.random_integers(0, 2 ** 31 - 1, c.shape)
         self.assert_(np.allclose(a, c))
@@ -85,7 +94,7 @@ class Test_shmmap(unittest.TestCase):
 
         shm1[:] = os.urandom(length)
         shm2 = pickle.loads(shm2)
-        self.assertEqual(shm1.semname, shm2.semname)
+        self.assertEqual(shm1.name, shm2.name)
         self.assertEqual(shm1[:], shm2[:])
 
     def test_del(self):
@@ -95,18 +104,18 @@ class Test_shmmap(unittest.TestCase):
 
         length = 1
         shm1 = shmmap.fromlength(length)
-        semname = shm1.semname
+        name = shm1.name
 
         shm2 = pickle.dumps(shm1)
         del shm1
         with self.assertRaises(posix_ipc.ExistentialError):
-            with contextlib.closing(posix_ipc.Semaphore(name=semname, flags=posix_ipc.O_CREX)) as sem:
+            with contextlib.closing(posix_ipc.Semaphore(name=name, flags=posix_ipc.O_CREX)) as sem:
                 posix_ipc.unlink_semaphore(sem.name)
 
         shm2 = pickle.loads(shm2)
         del shm2
         with self.assertRaises(posix_ipc.ExistentialError):
-            with contextlib.closing(posix_ipc.Semaphore(name=semname)) as sem:
+            with contextlib.closing(posix_ipc.Semaphore(name=name)) as sem:
                 posix_ipc.unlink_semaphore(sem.name)
 
 

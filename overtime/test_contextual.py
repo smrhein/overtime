@@ -1,5 +1,6 @@
 import unittest
-from contextual import  get_context_guard, contextual_task, IteratedContextManager, GenericContextManager
+
+from contextual import get_context_guard
 
 
 class Test_get_context_guard(unittest.TestCase):
@@ -8,13 +9,24 @@ class Test_get_context_guard(unittest.TestCase):
             enter, exit_ = get_context_guard(f)
             self.assertEqual(enter, f.__enter__)
             self.assertEqual(exit_, f.__exit__)
-            
-        self.assertRaises(TypeError, get_context_guard, '')
-        
 
-class Test_contextual_task(unittest.TestCase):
+        self.assertRaises(TypeError, get_context_guard, '')
+
+
+class Test_Exiting(unittest.TestCase):
     def test_call(self):
-        self.assert_(False)
+        raise NotImplementedError
+
+
+class Test_Iterated(unittest.TestCase):
+    def test_call(self):
+        raise NotImplementedError
+
+
+class Test_GenericContextManager(unittest.TestCase):
+    def test_call(self):
+        raise NotImplementedError
+
 
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']

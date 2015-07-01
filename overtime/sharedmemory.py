@@ -6,10 +6,14 @@ import sys
 import pickle
 import uuid
 import warnings
+import multiprocessing
 
 import numpy as np
 
-from overtime.contextual import exiting
+from overtime.contextual import Exiting, Iterated
+
+
+_lck = multiprocessing.RLock()
 
 
 def _debug(*args, **kwargs):
@@ -26,29 +30,27 @@ class shmmap(mmap.mmap):
 
     @classmethod
     def fromlength(cls, length):
-        return cls(None, None, length)
+        return cls(None, length)
 
-    def __new__(cls, semname, shmname, length, access=mmap.ACCESS_WRITE, offset=0):
+    def __new__(cls, name, length, access=mmap.ACCESS_WRITE, offset=0):
         try:
-            if semname and shmname:
+            if name is not None:
                 flags = 0
-            elif not semname and not shmname:
-                semname = cls._ipc_name()
-                shmname = cls._ipc_name()
-                flags = posix_ipc.O_CREX
             else:
-                raise ValueError('semname if and only if shmname')
+                name = cls._ipc_name()
+                flags = posix_ipc.O_CREX
 
-            with contextlib.closing(posix_ipc.Semaphore(name=semname, flags=flags)), \
-                 exiting(posix_ipc.SharedMemory(name=shmname, flags=flags, size=length),
-                         exiter=posix_ipc.SharedMemory.close_fd) as shm:
+            with Iterated(contextlib.closing(posix_ipc.Semaphore(name=name, flags=flags)),
+                          Exiting(exiter=posix_ipc.SharedMemory.close_fd,
+                                  exiter_self=posix_ipc.SharedMemory(name=name, flags=flags, size=length))) as (
+                    (sem, shm), _):
+                _debug('new', name, sem.value)
                 self = super(shmmap, cls).__new__(cls, shm.fd, length, access=access, offset=offset)
-            self.shmname = shmname
-            self.semname = semname
+            self.name = name
         except:
             exc = sys.exc_info()
             try:
-                cls._cleanup(semname, shmname)
+                cls._cleanup(name)
             finally:
                 raise exc[0], exc[1], exc[2]
         else:
@@ -63,27 +65,29 @@ class shmmap(mmap.mmap):
     def __reduce__(self):
         if self.access == mmap.ACCESS_COPY:
             raise pickle.PicklingError('copy on write memory cannot be pickled')
-        copy = self.__class__, (self.semname, self.shmname, self.length, self.access, self.offset)
-        with contextlib.closing(posix_ipc.Semaphore(self.semname, 0)) as sem:
+        copy = self.__class__, (self.name, self.length, self.access, self.offset)
+        with contextlib.closing(posix_ipc.Semaphore(self.name, 0)) as sem:
             sem.release()
+            _debug('rel', self.name, sem.value)
         return copy
 
     def __del__(self):
         self.close()
-        self._cleanup(self.semname, self.shmname)
+        self._cleanup(self.name)
 
     @staticmethod
-    def _cleanup(semname, shmname):
+    def _cleanup(name):
         try:
-            with contextlib.closing(posix_ipc.Semaphore(semname, 0)) as sem:
+            with contextlib.closing(posix_ipc.Semaphore(name, 0)) as sem:
+                _debug('cln', name, sem.value)
                 try:
                     sem.acquire(0)
                 except posix_ipc.BusyError:
-                    posix_ipc.unlink_semaphore(semname)
-                    posix_ipc.unlink_shared_memory(shmname)
+                    posix_ipc.unlink_semaphore(name)
+                    posix_ipc.unlink_shared_memory(name)
         except Exception as e:
-            warnings.warn('possible resource leakage of {} and/or {} caused by {}'.format(semname, shmname, e),
-                          RuntimeWarning)
+            warnings.warn('possible resource leakage of {} caused by {}'.format(name, e), RuntimeWarning)
+            raise
 
 
 class ndshm(np.ndarray):

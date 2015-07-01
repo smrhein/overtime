@@ -30,21 +30,3 @@ class CallBuilder(object):
 
     def __call__(self, *args, **kwargs):
         return self.extend_args(args).update_kwargs(kwargs).__call__()
-
-
-def __print_attr(obj):
-    import traceback
-    import sys
-
-    for a in sorted(dir(obj)):
-        if a[0] != '_':
-            try:
-                att = getattr(obj, a)
-                if not hasattr(att, '__call__'):
-                    print a
-                    print att
-                    print
-            except:
-                print a
-                print
-                traceback.print_exc(file=sys.stdout)

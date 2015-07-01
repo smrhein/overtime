@@ -1,5 +1,7 @@
 import unittest
+
 from overtime.utils import CallBuilder, unpack_nfirst
+
 
 class Test_unpack_nfirst(unittest.TestCase):
     def test_call(self):
@@ -8,7 +10,7 @@ class Test_unpack_nfirst(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             first, second, rest = unpack_nfirst((0,), 2)
-            
+
         first, rest = unpack_nfirst((0, 1), 1)
         self.assertEqual(first, 0)
         self.assertEqual(rest, (1,))
@@ -17,8 +19,8 @@ class Test_unpack_nfirst(unittest.TestCase):
         self.assertEqual(first, 0)
         self.assertEqual(second, 1)
         self.assertEqual(rest, (2, 3))
-        
-        
+
+
 class Test_CallBuilder(unittest.TestCase):
     def test_extend(self):
         v = list((0, 1, 2, 3))
@@ -26,27 +28,27 @@ class Test_CallBuilder(unittest.TestCase):
         c = c.extend_args([v])
         c()
         self.assertEqual(v, [0, 1, 2, 3] * 2)
-        
+
         v = list((0, 1, 2, 3))
         c = CallBuilder(list, 'extend')
         c = c.extend_args([v, v])
         c()
         self.assertEqual(v, [0, 1, 2, 3] * 2)
-        
+
     def test_update(self):
-        v = {'a':0, 'b':1, 'c':2}
+        v = {'a': 0, 'b': 1, 'c': 2}
         c = CallBuilder(v, 'update')
         c = c.update_kwargs(a=2, b=1, c=0)
         c()
-        self.assertEqual(v, {'a':2, 'b':1, 'c':0})
+        self.assertEqual(v, {'a': 2, 'b': 1, 'c': 0})
 
-        v = {'a':0, 'b':1, 'c':2}
+        v = {'a': 0, 'b': 1, 'c': 2}
         c = CallBuilder(dict, 'update')
         c = c.extend_args([v])
         c = c.update_kwargs(a=2, b=1, c=0)
         c()
-        self.assertEqual(v, {'a':2, 'b':1, 'c':0})
-        
+        self.assertEqual(v, {'a': 2, 'b': 1, 'c': 0})
+
     def test_call(self):
         fmt = '{0} {1} {2} {zero} {one} {two}'
         c = CallBuilder(fmt, 'format')
