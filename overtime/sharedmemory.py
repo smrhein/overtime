@@ -86,7 +86,8 @@ class shmmap(mmap.mmap):
                     posix_ipc.unlink_semaphore(name)
                     posix_ipc.unlink_shared_memory(name)
         except Exception as e:
-            warnings.warn('possible resource leakage of {} caused by {}'.format(name, e), RuntimeWarning)
+            warnings.warn('possible resource leakage of {} caused by {}: {}'.format(name, e.__class__.__name__, e),
+                          RuntimeWarning)
             raise
 
 
