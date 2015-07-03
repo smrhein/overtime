@@ -28,6 +28,21 @@ class Test_GenericContextManager(unittest.TestCase):
         raise NotImplementedError
 
 
+class Test_ctx_delayed(unittest.TestCase):
+    def test_call(self):
+        raise NotImplementedError
+
+
+class Test_ctx_worker(unittest.TestCase):
+    def test_call(self):
+        raise NotImplementedError
+
+
+class Test_CtxObject(unittest.TestCase):
+    def test_call(self):
+        raise NotImplementedError
+
+
 if __name__ == "__main__":
     # import sys;sys.argv = ['', 'Test.testName']
     unittest.main()

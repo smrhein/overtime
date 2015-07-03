@@ -1,4 +1,41 @@
 import sys
+import functools
+import pickle
+
+
+class CtxObject(object):
+    def __init__(self, obj):
+        self._obj = obj
+
+    def __enter__(self):
+        return self._obj
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        del self._obj
+
+
+def ctx_delayed(function, check_pickle=True):
+    if check_pickle:
+        pickle.dumps(function)
+
+    def delayed_function(*args, **kwargs):
+        return ctx_worker, (function, args, kwargs), {}
+
+    try:
+        delayed_function = functools.wraps(function)(delayed_function)
+    except AttributeError:
+        " functools.wraps fails on some callable objects "
+    return delayed_function
+
+
+def ctx_worker(function, args, kwargs):
+    if not isinstance(function, CtxObject):
+        function = CtxObject(function)
+    args = [CtxObject(v) if not isinstance(v, CtxObject) else v for v in args]
+    kwargs = {k: (CtxObject(v) if not isinstance(v, CtxObject) else v) for (k, v) in kwargs.iteritems()}
+    with Iterated(function, *args, **kwargs) as (args, kwargs):
+        function, args = args[0], args[1:]
+        return function(*args, **kwargs)
 
 
 class Exiting(object):
@@ -122,17 +159,17 @@ class Iterated(object):
 # except TypeError:
 # pass
 # else:
-#                 mgr_keys.append(k)
+# mgr_keys.append(k)
 #
-#         with IteratedContextManager(*(args[i] for i in mgr_indices), **{k: kwargs[k] for k in mgr_keys}) as (
-#                 mgr_args, mgr_kwargs):
-#             for i, v in itertools.izip(mgr_indices, mgr_args):
-#                 args[i] = v
-#             for k, v in itertools.izip(mgr_keys, mgr_kwargs):
-#                 kwargs[k] = v
-#             ret_func, call_func, args = overtime.utils.unpack_nfirst(args, 2)
-#             return ret_func(call_func(*args, **kwargs))
+# with IteratedContextManager(*(args[i] for i in mgr_indices), **{k: kwargs[k] for k in mgr_keys}) as (
+# mgr_args, mgr_kwargs):
+# for i, v in itertools.izip(mgr_indices, mgr_args):
+# args[i] = v
+# for k, v in itertools.izip(mgr_keys, mgr_kwargs):
+# kwargs[k] = v
+# ret_func, call_func, args = overtime.utils.unpack_nfirst(args, 2)
+# return ret_func(call_func(*args, **kwargs))
 #
 #
 # def contextual_task(ret_func, call_func):
-#     return joblib.delayed(_contextual_task(ret_func, call_func), check_pickle=False)
+# return joblib.delayed(_contextual_task(ret_func, call_func), check_pickle=False)
