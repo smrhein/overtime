@@ -1,6 +1,155 @@
+from collections import Sized
+from multiprocessing.pool import ThreadPool
+import os
 import sys
 import functools
 import pickle
+import threading
+import warnings
+import gc
+import itertools
+import time
+import multiprocessing as mp
+
+import joblib
+from joblib.logger import short_format_time
+from joblib.my_exceptions import TransportableException
+from joblib.parallel import LockedIterator, JOBLIB_SPAWNED_PROCESS, WorkerInterrupt
+from joblib.pool import MemmapingPool
+
+
+class Parallel(joblib.Parallel):
+    def __call__(self, iterable):
+        if self._jobs:
+            raise ValueError('This Parallel instance is already running')
+        n_jobs = self.n_jobs
+        if n_jobs == 0:
+            raise ValueError('n_jobs == 0 in Parallel has no meaning')
+        if n_jobs < 0 and mp is not None:
+            n_jobs = max(mp.cpu_count() + 1 + n_jobs, 1)
+
+        # The list of exceptions that we will capture
+        self.exceptions = [TransportableException]
+        self._lock = threading.Lock()
+
+        # Whether or not to set an environment flag to track
+        # multiple process spawning
+        set_environ_flag = False
+        if (n_jobs is None or mp is None or n_jobs == 1):
+            n_jobs = 1
+            self._pool = None
+        elif self.backend == 'threading':
+            self._pool = ThreadPool(n_jobs)
+        elif self.backend == 'multiprocessing':
+            if mp.current_process().daemon:
+                # Daemonic processes cannot have children
+                n_jobs = 1
+                self._pool = None
+                warnings.warn(
+                    'Multiprocessing-backed parallel loops cannot be nested,'
+                    ' setting n_jobs=1',
+                    stacklevel=2)
+            elif threading.current_thread().name != 'MainThread':
+                # Prevent posix fork inside in non-main posix threads
+                n_jobs = 1
+                self._pool = None
+                warnings.warn(
+                    'Multiprocessing backed parallel loops cannot be nested'
+                    ' below threads, setting n_jobs=1',
+                    stacklevel=2)
+            else:
+                already_forked = int(os.environ.get('__JOBLIB_SPAWNED_PARALLEL__', 0))
+                if already_forked:
+                    raise ImportError('[joblib] Attempting to do parallel computing '
+                                      'without protecting your import on a system that does '
+                                      'not support forking. To use parallel-computing in a '
+                                      'script, you must protect you main loop using "if '
+                                      "__name__ == '__main__'"
+                                      '". Please see the joblib documentation on Parallel '
+                                      'for more information'
+                                      )
+
+                # Make sure to free as much memory as possible before forking
+                gc.collect()
+
+                # Set an environment variable to avoid infinite loops
+                set_environ_flag = True
+                poolargs = dict(
+                    max_nbytes=self._max_nbytes,
+                    mmap_mode=self._mmap_mode,
+                    temp_folder=self._temp_folder,
+                    verbose=max(0, self.verbose - 50),
+                    context_id=0,  # the pool is used only for one call
+                )
+                if self._mp_context is not None:
+                    # Use Python 3.4+ multiprocessing context isolation
+                    poolargs['context'] = self._mp_context
+                self._pool = MemmapingPool(n_jobs, **poolargs)
+                # We are using multiprocessing, we also want to capture
+                # KeyboardInterrupts
+                self.exceptions.extend([KeyboardInterrupt, WorkerInterrupt])
+        else:
+            raise ValueError("Unsupported backend: %s" % self.backend)
+
+        pre_dispatch = self.pre_dispatch
+        if isinstance(iterable, Sized):
+            # We are given a sized (an object with len). No need to be lazy.
+            pre_dispatch = 'all'
+
+        if pre_dispatch == 'all' or n_jobs == 1:
+            self._original_iterable = None
+            self._pre_dispatch_amount = 0
+        else:
+            # The dispatch mechanism relies on multiprocessing helper threads
+            # to dispatch tasks from the original iterable concurrently upon
+            # job completions. As Python generators are not thread-safe we
+            # need to wrap it with a lock
+            iterable = LockedIterator(iterable)
+            self._original_iterable = iterable
+            self._dispatch_amount = 0
+            if hasattr(pre_dispatch, 'endswith'):
+                pre_dispatch = eval(pre_dispatch)
+            self._pre_dispatch_amount = pre_dispatch = int(pre_dispatch)
+
+            # The main thread will consume the first pre_dispatch items and
+            # the remaining items will later be lazily dispatched by async
+            # callbacks upon task completions
+            iterable = itertools.islice(iterable, pre_dispatch)
+
+        self._start_time = time.time()
+        self.n_dispatched = 0
+        try:
+            if set_environ_flag:
+                # Set an environment variable to avoid infinite loops
+                os.environ[JOBLIB_SPAWNED_PROCESS] = '1'
+            self._iterating = True
+            for function, args, kwargs in iterable:
+                self.dispatch(function, args, kwargs)
+
+            if pre_dispatch == "all" or n_jobs == 1:
+                # The iterable was consumed all at once by the above for loop.
+                # No need to wait for async callbacks to trigger to
+                # consumption.
+                self._iterating = False
+            self.retrieve()
+            # Make sure that we get a last message telling us we are done
+            elapsed_time = time.time() - self._start_time
+            self._print('Done %3i out of %3i | elapsed: %s finished',
+                        (len(self._output),
+                         len(self._output),
+                         short_format_time(elapsed_time)
+                         ))
+
+        finally:
+            if n_jobs > 1:
+                self._pool.close()
+                self._pool.join()  # terminate does NOT do a join()
+                if self.backend == 'multiprocessing':
+                    os.environ.pop(JOBLIB_SPAWNED_PROCESS, 0)
+            self._jobs = list()
+        output = self._output
+        self._output = None
+        return output
 
 
 class CtxObject(object):
@@ -60,7 +209,7 @@ class GenericContextManager(object):
     def __enter__(self):
         value = self._enter_call()
         self._exit_call = self._exit_call.with_object(value)
-        return self._value
+        return value
 
     def __exit__(self, exc_type, exc_value, traceback):
         self._exit_call()
@@ -133,7 +282,6 @@ class Iterated(object):
                 raise exc[0], exc[1], exc[2]
             else:
                 return suppress
-
 
 # class _contextual_task(object):
 # def __init__(self, ret_func, call_func):

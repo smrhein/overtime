@@ -7,20 +7,20 @@ import pickle
 import uuid
 import warnings
 import multiprocessing
+import threading
 
 import numpy as np
 
 from overtime.contextual import Exiting, Iterated
 
-
 _lck = multiprocessing.RLock()
 
 
 def _debug(*args, **kwargs):
-    pass
-    # k = multiprocessing.current_process().ident, threading.current_thread().ident
-    # with _lck:
-    # print(k, *args, **kwargs)
+    return
+    k = multiprocessing.current_process().ident, threading.current_thread().ident
+    with _lck:
+        print(k, *args, **kwargs)
 
 
 class shmmap(mmap.mmap):
@@ -93,20 +93,33 @@ class shmmap(mmap.mmap):
 
 class ndshm(np.ndarray):
     @classmethod
-    def fromndarray(cls, a, dtype=None, order=None, subok=False):
+    def fromndarray(cls, a, dtype=None, order='K', subok=True):
+        return cls.full_like(a, a, dtype, order, subok)
+
+    @classmethod
+    def full_like(cls, a, fill_value, dtype=None, order='K', subok=True):
         b = cls.empty_like(a, dtype, order, subok)
-        b[...] = a
+        b[...] = fill_value
         return b
 
     @classmethod
-    def zeros(cls, shape, dtype=None, order='C'):
-        a = cls.empty(shape, dtype, order)
-        a[...] = 0
-        return a
+    def empty_like(cls, a, dtype=None, order='K', subok=True):
+        if dtype is None:
+            dtype = a.dtype
+        if order in ('A', 'K'):
+            order = 'F' if a.flags['F_CONTIGUOUS'] else 'C'
+        if not subok:
+            cls = ndshm
+        return cls.empty(a.shape, dtype, order)
 
     @classmethod
-    def empty_like(cls, a, dtype=None, order='K', subok=True):
-        b = (cls if subok else ndshm).empty(a.shape, dtype, order)
+    def zeros(cls, shape, dtype=None, order='C'):
+        return cls.full(shape, 0, dtype, order)
+
+    @classmethod
+    def full(cls, shape, fill_value, dtype=None, order='C'):
+        b = cls.empty(shape, dtype, order)
+        b[...] = fill_value
         return b
 
     @classmethod
@@ -139,14 +152,15 @@ class ndshm(np.ndarray):
 
     def __reduce__(self):
         if self._shm is None:
-            raise pickle.PicklingError('array is not backed by shared memory')
-        if self.flags['C_CONTIGUOUS']:
-            order = 'C'
-        elif self.flags['F_CONTIGUOUS']:
-            order = 'F'
+            # raise pickle.PicklingError('array is not backed by shared memory')
+            warnings.warn('pickled {} array is not backed by shared memory'.format(self.__class__.__name__),
+                          RuntimeWarning)
+            return super(ndshm, self).__reduce__()
         else:
-            order = None
-        return self.__class__, (self.shape, self.dtype, self._shm, self.offset, self.strides, order)
-
-
-
+            if self.flags['C_CONTIGUOUS']:
+                order = 'C'
+            elif self.flags['F_CONTIGUOUS']:
+                order = 'F'
+            else:
+                order = None
+            return self.__class__, (self.shape, self.dtype, self._shm, self.offset, self.strides, order)
